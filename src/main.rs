@@ -21,8 +21,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-const PRELUDE: &str =
-    "[ -f ~/.profile ] && . ~/.profile; [ -f ~/.bashrc ] && . ~/.bashrc; ";
+const PRELUDE: &str = "[ -f ~/.profile ] && . ~/.profile; [ -f ~/.bashrc ] && . ~/.bashrc; ";
 
 const DEFAULT_TOOLS: &[&str] = &["node", "npm", "cargo", "go", "uv", "pyenv"];
 
@@ -33,6 +32,7 @@ fn manifest() -> Value {
         "protocol": "2.0",
         "tools": [],
         "commands": ["/env"],
+        "command_descriptions": {"/env": "show the login environment the bash tool gets"},
         "hooks": ["tool/before"],
     })
 }
@@ -91,7 +91,9 @@ fn already_sources(command: &str) -> bool {
     if command.contains("bash -l") || command.contains("--login") {
         return true;
     }
-    command.split_whitespace().any(|t| t == "source" || t == ".")
+    command
+        .split_whitespace()
+        .any(|t| t == "source" || t == ".")
 }
 
 /// First token's basename — `./node`, `~/.cargo/bin/cargo` both count.
@@ -212,7 +214,9 @@ fn main() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
         let line = line?;
-        let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(req) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let (reply, exit) = handle(&req);
         if let Some(reply) = reply {
             writeln!(stdout, "{reply}")?;
@@ -262,8 +266,14 @@ mod tests {
 
     #[test]
     fn path_invocations_match_basename() {
-        assert_eq!(before("~/.cargo/bin/cargo build")["result"]["decision"], "modify");
-        assert_eq!(before("./node_modules/.bin/node x.js")["result"]["decision"], "modify");
+        assert_eq!(
+            before("~/.cargo/bin/cargo build")["result"]["decision"],
+            "modify"
+        );
+        assert_eq!(
+            before("./node_modules/.bin/node x.js")["result"]["decision"],
+            "modify"
+        );
     }
 
     #[test]
@@ -287,7 +297,10 @@ mod tests {
 
     #[test]
     fn non_bash_allows() {
-        let r = call("tool/before", json!({"name": "write", "args": {"path": "x"}}));
+        let r = call(
+            "tool/before",
+            json!({"name": "write", "args": {"path": "x"}}),
+        );
         assert_eq!(r["result"]["decision"], "allow");
     }
 
