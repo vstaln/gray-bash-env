@@ -31,6 +31,7 @@ fn manifest() -> Value {
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "2.0",
         "tools": [],
+        "description": "fix login-shell env for toolchain commands",
         "commands": ["/env"],
         "command_descriptions": {"/env": "show the login environment the bash tool gets"},
         "hooks": ["tool/before"],
