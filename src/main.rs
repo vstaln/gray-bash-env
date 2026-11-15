@@ -17,7 +17,7 @@
 //! `/env on|off|add <tool>|rm <tool>|list`. Default on. Fail open.
 
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -55,11 +55,23 @@ fn enabled() -> bool {
 fn set_enabled(on: bool) -> std::io::Result<()> {
     let dir = state_dir();
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("enabled"), if on { "on" } else { "off" })
+    write_atomic(&dir.join("enabled"), if on { "on" } else { "off" })
 }
 
 fn tools_file() -> PathBuf {
     state_dir().join("tools.txt")
+}
+
+fn write_atomic(path: &Path, body: &str) -> std::io::Result<()> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = path.with_extension(format!("tmp-{}-{nanos}", std::process::id()));
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Load the watched-tool list, seeding the file with defaults on first use.
@@ -67,7 +79,7 @@ fn tools() -> Vec<String> {
     let file = tools_file();
     if !file.exists() {
         let _ = std::fs::create_dir_all(state_dir());
-        let _ = std::fs::write(&file, DEFAULT_TOOLS.join("\n") + "\n");
+        let _ = write_atomic(&file, &(DEFAULT_TOOLS.join("\n") + "\n"));
     }
     std::fs::read_to_string(&file)
         .map(|s| {
@@ -83,7 +95,7 @@ fn tools() -> Vec<String> {
 fn write_tools(list: &[String]) -> std::io::Result<()> {
     let dir = state_dir();
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(tools_file(), list.join("\n") + "\n")
+    write_atomic(&tools_file(), &(list.join("\n") + "\n"))
 }
 
 /// The command already arranges its own environment — don't double-source.
@@ -239,6 +251,17 @@ mod tests {
             .unwrap()
     }
 
+    fn test_home() {
+        static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        HOME.get_or_init(|| {
+            let d = std::env::temp_dir().join(format!("gray-bash-env-test-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            unsafe { std::env::set_var("GRAY_HOME", &d) };
+            d
+        });
+    }
+
     fn before(command: &str) -> Value {
         call(
             "tool/before",
@@ -256,6 +279,7 @@ mod tests {
 
     #[test]
     fn watched_tools_get_prelude() {
+        test_home();
         for cmd in ["npm test", "cargo build", "uv run x.py", "go build ./..."] {
             let r = before(cmd);
             assert_eq!(r["result"]["decision"], "modify", "for {cmd}");
@@ -266,6 +290,7 @@ mod tests {
 
     #[test]
     fn path_invocations_match_basename() {
+        test_home();
         assert_eq!(
             before("~/.cargo/bin/cargo build")["result"]["decision"],
             "modify"
@@ -278,6 +303,7 @@ mod tests {
 
     #[test]
     fn unwatched_tools_pass() {
+        test_home();
         for cmd in ["ls -la", "echo hi", "python x.py", "pip install x", ""] {
             assert_eq!(before(cmd)["result"]["decision"], "allow", "for {cmd}");
         }
@@ -285,6 +311,7 @@ mod tests {
 
     #[test]
     fn already_sourcing_passes() {
+        test_home();
         for cmd in [
             "source ~/.profile && npm test",
             ". ~/.bashrc; npm test",
@@ -297,6 +324,7 @@ mod tests {
 
     #[test]
     fn non_bash_allows() {
+        test_home();
         let r = call(
             "tool/before",
             json!({"name": "write", "args": {"path": "x"}}),
@@ -306,6 +334,7 @@ mod tests {
 
     #[test]
     fn tools_file_is_seeded() {
+        test_home();
         let list = tools();
         for d in DEFAULT_TOOLS {
             assert!(list.iter().any(|t| t == d), "missing default {d}");
